@@ -3,8 +3,11 @@ Worker thread for non-blocking serial communication.
 Handles command sending and response receiving in a separate thread.
 """
 
-from PyQt6.QtCore import QObject, pyqtSignal
+from PySide2.QtCore import QObject, Signal
 from src.serial_manager import SerialManager
+
+# PySide2 では Signal を使い、微妙な互換性のためにエイリアスを作成
+pyqtSignal = Signal
 
 
 class SerialWorker(QObject):

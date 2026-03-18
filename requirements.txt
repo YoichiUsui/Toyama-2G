@@ -1,2 +1,2 @@
 pyserial==3.5
-PyQt6==6.6.1
+PySide2==5.15.2
