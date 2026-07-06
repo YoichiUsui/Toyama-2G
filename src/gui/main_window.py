@@ -3,13 +3,13 @@ Main window for the Serial Device Test application.
 Provides GUI for managing multiple serial devices and sending commands.
 """
 
-from PySide2.QtWidgets import (
+from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QComboBox, QPushButton, QLineEdit, QTextEdit, QGroupBox,
     QMessageBox, QGridLayout
 )
-from PySide2.QtCore import QThread
-from PySide2.QtGui import QFont
+from PyQt6.QtCore import QThread
+from PyQt6.QtGui import QFont
 from datetime import datetime
 from typing import Optional
 from src.serial_manager import SerialManager
