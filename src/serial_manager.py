@@ -3,7 +3,7 @@ Serial device manager for handling multiple devices.
 Provides device management, port enumeration, and connection handling.
 """
 
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional
 import serial.tools.list_ports
 from src.device import SerialDevice, SampleHandler, Degausser, SQUID
 
@@ -115,6 +115,14 @@ class SerialManager:
             return False
 
         return device.send_command(command)
+
+    def prepare_command(self, device_name: str, command: str) -> str:
+        """Get the normalized command that will be sent to a device."""
+        device = self.get_device(device_name)
+        if not device:
+            return command
+
+        return device.normalize_command(command)
 
     def receive_response(
         self, device_name: str, timeout: Optional[float] = None

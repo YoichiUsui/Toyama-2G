@@ -77,6 +77,10 @@ class SerialDevice(ABC):
         """Check if device is currently connected."""
         return self.serial_port is not None and self.serial_port.is_open
 
+    def normalize_command(self, command: str) -> str:
+        """Normalize a command string before sending it to the device."""
+        return command
+
     def send_command(self, command: str) -> bool:
         """
         Send a command to the device.
@@ -92,7 +96,8 @@ class SerialDevice(ABC):
             return False
 
         try:
-            self.serial_port.write(command.encode())
+            payload = self.normalize_command(command)
+            self.serial_port.write(payload.encode())
             return True
         except serial.SerialException as e:
             print(f"Failed to send command to {self.device_name}: {e}")
@@ -171,13 +176,17 @@ class Degausser(SerialDevice):
     def __init__(self):
         super().__init__("Degausser")
 
+    def normalize_command(self, command: str) -> str:
+        """Always terminate Degausser commands with a single CR."""
+        return command.rstrip("\r\n") + "\r"
+
     def get_connection_command(self) -> str:
         """Connection command for Degausser."""
-        return "DSS\n\r"
+        return "DSS"
 
     def get_status_command(self) -> str:
         """Status query command for Degausser."""
-        return "DSS\n\r"
+        return "DSS"
 
 
 class SQUID(SerialDevice):
@@ -186,10 +195,14 @@ class SQUID(SerialDevice):
     def __init__(self):
         super().__init__("SQUID")
 
+    def normalize_command(self, command: str) -> str:
+        """Always terminate SQUID commands with a single CR."""
+        return command.rstrip("\r\n") + "\r"
+
     def get_connection_command(self) -> str:
         """Connection command for SQUID."""
-        return "YSSL\n\r"
+        return "YSSL"
 
     def get_status_command(self) -> str:
         """Status query command for SQUID."""
-        return "YSSL\n\r"
+        return "YSSL"

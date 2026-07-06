@@ -8,11 +8,8 @@ from PySide2.QtWidgets import (
     QComboBox, QPushButton, QLineEdit, QTextEdit, QGroupBox,
     QMessageBox, QGridLayout
 )
-from PySide2.QtCore import Qt, QThread
+from PySide2.QtCore import QThread
 from PySide2.QtGui import QFont
-
-# PySide2 コードでは Signal を使用（PyQt6 の pyqtSignal 相当）
-from PySide2.QtCore import Signal as pyqtSignal
 from datetime import datetime
 from typing import Optional
 from src.serial_manager import SerialManager
@@ -50,6 +47,7 @@ class MainWindow(QMainWindow):
         # Command input section
         command_group = self.create_command_group()
         main_layout.addWidget(command_group)
+        self.update_command_placeholder(self.current_device)
 
         # Log section
         log_group = self.create_log_group()
@@ -78,6 +76,7 @@ class MainWindow(QMainWindow):
         self.device_combo.addItems(self.serial_manager.get_all_device_names())
         self.device_combo.currentTextChanged.connect(self.on_device_selected)
         layout.addWidget(self.device_combo, 1, 1)
+        self.current_device = self.device_combo.currentText()
 
         # Connection status
         self.status_label = QLabel("Status: Disconnected")
@@ -151,8 +150,20 @@ class MainWindow(QMainWindow):
     def on_device_selected(self, device_name: str):
         """Handle device selection change."""
         self.current_device = device_name
+        self.update_command_placeholder(device_name)
         is_connected = self.serial_manager.is_device_connected(device_name)
         self.update_connection_status(is_connected)
+
+    def update_command_placeholder(self, device_name: Optional[str]):
+        """Update placeholder text based on the selected device."""
+        placeholder_map = {
+            "Sample Handler": "Enter command (e.g., @0, or ?)",
+            "Degausser": "Enter command without terminator (e.g., DSS; CR is added automatically)",
+            "SQUID": "Enter command without terminator (e.g., YSSL; CR is added automatically)",
+        }
+        self.command_input.setPlaceholderText(
+            placeholder_map.get(device_name, "Enter command")
+        )
 
     def update_connection_status(self, is_connected: bool):
         """Update the connection status display."""
@@ -229,6 +240,7 @@ class MainWindow(QMainWindow):
         self.worker.moveToThread(self.worker_thread)
 
         self.worker_thread.started.connect(self.worker.run)
+        self.worker.command_sent.connect(self.on_command_sent)
         self.worker.response_received.connect(self.on_response_received)
         self.worker.error_occurred.connect(self.on_communication_error)
         self.worker.finished.connect(self.worker_thread.quit)
@@ -237,26 +249,35 @@ class MainWindow(QMainWindow):
 
         self.send_btn.setEnabled(False)
         self.statusBar().showMessage("Sending command...")
-        self.log_append(f"[{self.current_device}] >> {command}")
 
         self.worker_thread.start()
 
-    def on_response_received(self, response: str):
+    def on_command_sent(self, device_name: str, payload: str):
+        """Log the actual payload sent to the device."""
+        self.log_append(
+            f"[{device_name}] >> {self.format_command_for_log(payload)}"
+        )
+
+    def on_response_received(self, device_name: str, response: str):
         """Handle response received from device."""
         self.response_display.setText(response if response else "(No response)")
         if response:
-            self.log_append(f"[{self.current_device}] << {response}")
+            self.log_append(f"[{device_name}] << {response}")
         else:
-            self.log_append(f"[{self.current_device}] << (No response - timeout)")
+            self.log_append(f"[{device_name}] << (No response - timeout)")
         self.send_btn.setEnabled(True)
         self.statusBar().showMessage("Ready")
 
-    def on_communication_error(self, error: str):
+    def on_communication_error(self, device_name: str, error: str):
         """Handle communication error."""
         QMessageBox.critical(self, "Communication Error", error)
-        self.log_append(f"[{self.current_device}] ERROR: {error}")
+        self.log_append(f"[{device_name}] ERROR: {error}")
         self.send_btn.setEnabled(True)
         self.statusBar().showMessage("Ready")
+
+    def format_command_for_log(self, payload: str) -> str:
+        """Render control characters in a visible form for logging."""
+        return payload.replace("\r", r"\r").replace("\n", r"\n")
 
     def log_append(self, message: str):
         """Append a message to the communication log."""
