@@ -19,7 +19,7 @@
 以下のコマンドで起動する。
 
 ```
-python scripts/run_sample_handler_setting_helper.py
+python scripts/sample_handler_setting_helper.py
 ```
 
 レイアウトの例は [`docs/移動量設定補助画面.jpg`](docs/移動量設定補助画面.jpg) を参照。
