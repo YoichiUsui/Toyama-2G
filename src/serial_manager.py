@@ -143,6 +143,22 @@ class SerialManager:
 
         return device.receive_response(timeout)
 
+    def receive_raw(
+        self, device_name: str, expected_line_count: int, timeout: Optional[float] = None
+    ) -> bytes:
+        """Receive raw bytes (no terminator handling) from a device."""
+        device = self.get_device(device_name)
+        if not device:
+            return b""
+
+        return device.receive_raw(expected_line_count, timeout)
+
+    def clear_input_buffer(self, device_name: str) -> None:
+        """Discard stale data waiting in a device's receive buffer."""
+        device = self.get_device(device_name)
+        if device:
+            device.clear_input_buffer()
+
     def get_connection_command(self, device_name: str) -> str:
         """Get the connection command for a device."""
         device = self.get_device(device_name)
