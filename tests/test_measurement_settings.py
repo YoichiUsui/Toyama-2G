@@ -121,6 +121,22 @@ class SampleMeasurementWorkerTests(unittest.TestCase):
         )
         self.manager.clear_input_buffer.assert_called_once_with("Sample Handler")
 
+    def test_home_retries_status_once_when_illegal_command_then_limit(self):
+        self.worker._send_handler = Mock()
+        self.worker._query_status = Mock(side_effect=["1", "7", "5"])
+        self.worker._query_position = Mock(return_value=100)
+
+        with unittest.mock.patch("src.gui.sample_measurement_worker.time.sleep"):
+            self.assertEqual(self.worker._home(), 100)
+
+    def test_home_fails_when_illegal_command_repeats(self):
+        self.worker._send_handler = Mock()
+        self.worker._query_status = Mock(side_effect=["1", "1"])
+
+        with unittest.mock.patch("src.gui.sample_measurement_worker.time.sleep"):
+            with self.assertRaisesRegex(ConnectionError, "illegal command"):
+                self.worker._home()
+
     def test_move_uses_nonnegative_amount_and_direction_separately(self):
         from unittest.mock import patch
 

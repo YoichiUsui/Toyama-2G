@@ -189,6 +189,17 @@ class SampleMeasurementWorker(QObject):
             if time.monotonic() >= seek_deadline:
                 raise TimeoutError("100秒以内にホーム側リミットスイッチへ到達しませんでした。")
             status = self._query_status()
+            if status == "1":
+                # すでにリミットスイッチに当たっている場合、Hl直後の%に1(illegal command)が
+                # 返ることがある。もう一度%を送り、7なら正常、再度1ならエラーとする。
+                self.log_message.emit("[警告] %に1が返りました。もう一度状態を確認します。")
+                time.sleep(POLL_INTERVAL_SEC)
+                status = self._query_status()
+                if status == "1":
+                    self.handler_moving = False
+                    raise ConnectionError(
+                        "ホーム動作中の%に対し、2回続けて1(illegal command)が返りました。"
+                    )
             if status == "7":
                 self.handler_moving = False
                 break
