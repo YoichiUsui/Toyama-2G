@@ -1,5 +1,5 @@
 home side: +
-home position (absolute count from the home side limit switch): 1300
+home position: 1300
 SQUID position (absolute count from the home side limit switch): 98996
 1st sample position in the home position(absolute count from the home side limit switch): 9196
 distance between samples (absolute count): 6172
