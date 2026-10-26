@@ -1,9 +1,9 @@
-Home side: +
-Home position (absolute count from the home side limit switch): 1300
+home side: +
+home position (absolute count from the home side limit switch): 1300
 SQUID position (absolute count from the home side limit switch): 98996
 1st sample position in the home position(absolute count from the home side limit switch): 9196
-Distance between samples (absolute count): 6172
-Background position: 103930
+distance between samples (absolute count): 6172
+background position: 103930
 conversion factor from count to mm： 0.032405
 moving velocity: 4000
 measurement velocity: 2000
