@@ -21,6 +21,7 @@ HOME_SEEK_TIMEOUT_SEC = 100.0
 HOME_RETRACT_TIMEOUT_SEC = 5.0
 MEASUREMENT_MOVE_TIMEOUT_SEC = 120.0
 POLL_INTERVAL_SEC = 0.1
+MOVE_START_DELAY_SEC = 0.3
 RESPONSE_TIMEOUT_SEC = 1.0
 
 
@@ -133,6 +134,8 @@ class SampleMeasurementWorker(QObject):
         self._send_handler(self.handler.cmd_execute_move(), "移動開始")
 
     def _wait_for_move(self, deadline: float, successful_codes=("5",)):
+        # G直後の%が、モーターが動き出す前の前回完了状態(5)を拾わないよう少し待つ。
+        time.sleep(MOVE_START_DELAY_SEC)
         while True:
             if time.monotonic() >= deadline:
                 raise TimeoutError("サンプルハンドラーの移動がタイムアウトしました。")
