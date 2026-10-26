@@ -1,0 +1,2 @@
+SQUID: COM6
+Sample Handler: COM5
