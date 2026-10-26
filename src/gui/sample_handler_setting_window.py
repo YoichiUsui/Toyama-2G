@@ -570,15 +570,27 @@ class SampleHandlerSettingWindow(QMainWindow):
                 )
         elif self.home_phase == "retract":
             if code == "5":
-                self.home_phase = None
                 self.home_deadline = None
                 self.home_timeout_timer.stop()
-                self.finish_moving("ホーム位置への移動完了")
+                self.home_phase = "position"
+                self.log_append("[進行] ホーム位置への移動が完了しました。現在位置を確認します。")
+                self.run_command_sequence(
+                    [("ホーム動作完了後の現在位置を確認", self.handler.cmd_query_position())],
+                    on_finished=self.after_home_position_query,
+                )
             elif code in ("2", "7"):
                 self.abort_home(
                     f"[エラー] ホーム位置への移動が完了しませんでした"
                     f" ({SampleHandler.describe_move_status(code)})。"
                 )
+
+    def after_home_position_query(self, success: bool):
+        """ホーム移動後の現在位置を読み終え、操作を再び受け付ける。"""
+        if not success:
+            self.log_append("[エラー] ホーム動作後の現在位置確認に失敗しました。")
+        self.home_phase = None
+        self.home_deadline = None
+        self.finish_moving("ホーム位置への移動完了")
 
     def abort_home(self, reason: str):
         """ホーム動作を中断し、Q を送ってから操作可能な状態に戻す。"""

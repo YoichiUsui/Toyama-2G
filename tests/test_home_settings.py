@@ -129,6 +129,11 @@ class SampleHandlerHomeCommandTests(unittest.TestCase):
         self.window.after_home_move_started(True)
         self.window.home_last_status_code = "5"
         self.window.after_home_poll(True)
+        position_steps = self.run_sequence.call_args.args[0]
+        self.assertEqual([step[1] for step in position_steps], ["VP"])
+        self.window.on_step_succeeded(0, "VP", "1234")
+        self.window.after_home_position_query(True)
+        self.assertEqual(self.window.position_label.text(), "現在位置: 1234")
         self.assertFalse(self.window.is_moving)
         self.assertIsNone(self.window.home_phase)
 
