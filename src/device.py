@@ -355,6 +355,10 @@ class SampleHandler(SerialDevice):
         """設定した内容で移動を実行するコマンド文字列 (G)。"""
         return "G"
 
+    def cmd_move_until_limit(self) -> str:
+        """設定した方向と速度でリミットスイッチまで移動するコマンド文字列 (Hl)。"""
+        return "Hl"
+
     def cmd_stop(self) -> str:
         """移動を途中で停止するコマンド文字列 (Q)。"""
         return "Q"

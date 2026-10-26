@@ -11,9 +11,11 @@
 """
 
 from datetime import datetime
+from pathlib import Path
+from time import monotonic
 from typing import List, Optional
 
-from PyQt6.QtCore import QObject, QThread, QTimer
+from PyQt6.QtCore import QObject, QThread, QTimer, Qt
 from PyQt6.QtWidgets import (
     QComboBox,
     QDoubleSpinBox,
@@ -33,6 +35,7 @@ from PyQt6.QtWidgets import (
 from src.device import SampleHandler
 from src.gui.command_sequence_worker import CommandSequenceWorker, CommandStep
 from src.gui.connection_check_worker import ConnectionCheckWorker
+from src.home_settings import load_home_settings
 from src.serial_manager import SerialManager
 
 # 移動量の入力可能範囲 (issue の「必要な機能」の補足に記載の範囲)
@@ -45,6 +48,9 @@ MOVE_AMOUNT_INPUT_MAX = 20000
 DEFAULT_POLL_INTERVAL_SEC = 1.0
 POLL_INTERVAL_MIN_SEC = 0.1
 POLL_INTERVAL_MAX_SEC = 60.0
+HOME_SEEK_TIMEOUT_SEC = 100.0
+HOME_MOVE_TIMEOUT_SEC = 5.0
+HOME_SPEED = 500
 
 
 class SampleHandlerSettingWindow(QMainWindow):
@@ -75,6 +81,12 @@ class SampleHandlerSettingWindow(QMainWindow):
 
         # 処理実行中に緊急停止が押された場合、その処理が終わり次第すぐ停止を送るための印。
         self.pending_stop = False
+        self.home_phase: Optional[str] = None
+        self.home_side_positive = False
+        self.home_position = 0
+        self.home_deadline: Optional[float] = None
+        self.home_last_status_code = ""
+        self.home_abort_reason: Optional[str] = None
 
         self.worker_thread: Optional[QThread] = None
         self.worker: Optional[QObject] = None
@@ -93,6 +105,11 @@ class SampleHandlerSettingWindow(QMainWindow):
         self.poll_timer = QTimer(self)
         self.poll_timer.setInterval(int(DEFAULT_POLL_INTERVAL_SEC * 1000))
         self.poll_timer.timeout.connect(self.on_poll_tick)
+
+        self.home_timeout_timer = QTimer(self)
+        self.home_timeout_timer.setSingleShot(True)
+        self.home_timeout_timer.setTimerType(Qt.TimerType.PreciseTimer)
+        self.home_timeout_timer.timeout.connect(self.on_home_timeout)
 
         self.init_ui()
 
@@ -204,6 +221,11 @@ class SampleHandlerSettingWindow(QMainWindow):
         self.stop_btn.setStyleSheet("background-color: #d9534f; color: white;")
         self.stop_btn.clicked.connect(self.on_stop_clicked)
         layout.addWidget(self.stop_btn, 2, 1)
+
+        self.home_btn = QPushButton("ホーム")
+        self.home_btn.setEnabled(False)
+        self.home_btn.clicked.connect(self.on_home_clicked)
+        layout.addWidget(self.home_btn, 3, 0, 1, 3)
 
         group.setLayout(layout)
         return group
@@ -375,6 +397,9 @@ class SampleHandlerSettingWindow(QMainWindow):
         self.decide_btn.setEnabled(self.is_ready and not self.is_moving)
         self.move_btn.setEnabled(self.is_ready and not self.is_moving)
         self.stop_btn.setEnabled(self.is_ready)
+        self.home_btn.setEnabled(
+            self.is_ready and self.is_connected() and not self.is_moving
+        )
 
     # ------------------------------------------------------------------
     # 移動の設定・実行・停止
@@ -407,6 +432,177 @@ class SampleHandlerSettingWindow(QMainWindow):
         steps: List[CommandStep] = [("移動を実行", self.handler.cmd_execute_move())]
         self.run_command_sequence(steps, on_finished=self.after_move)
 
+    def on_home_clicked(self):
+        """設定ファイルのホーム位置まで安全に移動する。"""
+        if not self.is_connected() or not self.is_ready:
+            QMessageBox.warning(self, "エラー", "サンプルハンドラーに接続してください")
+            return
+        if self.is_busy or self.is_moving:
+            return
+
+        settings_path = (
+            Path(__file__).resolve().parents[2]
+            / "settings"
+            / "samplehandler_setting.txt"
+        )
+        try:
+            settings = load_home_settings(settings_path)
+        except (OSError, UnicodeError, ValueError) as error:
+            message = f"ホーム設定を読み込めません: {error}"
+            self.log_append(f"[エラー] {message}")
+            QMessageBox.critical(self, "ホーム設定エラー", message)
+            return
+
+        self.home_side_positive = settings.side == "+"
+        self.home_position = settings.position
+        self.home_phase = "seek_setup"
+        self.home_abort_reason = None
+        self.is_moving = True
+        self.refresh_controls()
+        self.log_append(
+            f"[進行] ホーム検出を開始します (方向: {settings.side}、速度: {HOME_SPEED})。"
+        )
+        steps: List[CommandStep] = [
+            (
+                f"ホーム側の方向「{settings.side}」に設定",
+                self.handler.cmd_set_direction(self.home_side_positive),
+            ),
+            (
+                f"ホーム検出速度を{HOME_SPEED}に設定",
+                self.handler.cmd_set_speed(HOME_SPEED),
+            ),
+        ]
+        self.run_command_sequence(steps, on_finished=self.after_home_seek_setup)
+
+    def after_home_seek_setup(self, success: bool):
+        """方向と速度の設定後にリミットスイッチ検出を開始する。"""
+        if self.home_abort_reason:
+            return
+        if not success:
+            self.abort_home("[エラー] ホーム検出の方向・速度設定に失敗しました。")
+            return
+
+        self.home_phase = "seek"
+        self.home_deadline = monotonic() + HOME_SEEK_TIMEOUT_SEC
+        self.home_timeout_timer.start(int(HOME_SEEK_TIMEOUT_SEC * 1000))
+        self.log_append("[進行] Hl コマンドでホーム側リミットスイッチを検出します。")
+        self.run_command_sequence(
+            [("リミットスイッチまで移動", self.handler.cmd_move_until_limit())],
+            on_finished=self.after_home_seek_started,
+        )
+
+    def after_home_seek_started(self, success: bool):
+        """リミットスイッチ移動コマンド送信後に状態確認を開始する。"""
+        if self.home_abort_reason:
+            return
+        if not success:
+            self.abort_home("[エラー] リミットスイッチ移動コマンドの送信に失敗しました。")
+            return
+        self.poll_timer.start()
+
+    def start_home_retract(self):
+        """リミットスイッチから設定量だけ逆方向へ移動する。"""
+        if self.home_abort_reason:
+            return
+        self.poll_timer.stop()
+        self.home_phase = "retract_setup"
+        self.home_timeout_timer.stop()
+        retract_positive = not self.home_side_positive
+        direction = "+" if retract_positive else "-"
+        self.log_append(
+            f"[進行] リミットスイッチに到達しました。"
+            f"反対方向へ{self.home_position}移動します。"
+        )
+        steps: List[CommandStep] = [
+            (
+                f"ホーム位置側の方向「{direction}」に設定",
+                self.handler.cmd_set_direction(retract_positive),
+            ),
+            (
+                f"ホーム位置までの移動量を{self.home_position}に設定",
+                self.handler.cmd_set_move_amount(self.home_position),
+            ),
+        ]
+        self.run_command_sequence(steps, on_finished=self.after_home_retract_setup)
+
+    def after_home_retract_setup(self, success: bool):
+        """移動方向と量を設定した後にホーム位置への移動を実行する。"""
+        if self.home_abort_reason:
+            return
+        if not success:
+            self.abort_home("[エラー] ホーム位置への方向・移動量設定に失敗しました。")
+            return
+
+        self.home_phase = "retract"
+        self.home_deadline = monotonic() + HOME_MOVE_TIMEOUT_SEC
+        self.home_timeout_timer.start(int(HOME_MOVE_TIMEOUT_SEC * 1000))
+        self.home_last_status_code = ""
+        self.run_command_sequence(
+            [("ホーム位置へ移動", self.handler.cmd_execute_move())],
+            on_finished=self.after_home_move_started,
+        )
+
+    def after_home_move_started(self, success: bool):
+        """ホーム位置移動コマンド送信後に状態確認を開始する。"""
+        if self.home_abort_reason:
+            return
+        if not success:
+            self.abort_home("[エラー] ホーム位置への移動コマンド送信に失敗しました。")
+            return
+        self.poll_timer.start()
+
+    def after_home_poll(self, success: bool):
+        """ホーム動作中の状態応答を処理し、必要なら次段階へ進む。"""
+        if self.home_abort_reason:
+            return
+        if not success:
+            self.abort_home("[エラー] ホーム動作中の状態確認に失敗しました。")
+            return
+
+        code = self.home_last_status_code
+        if self.home_phase == "seek":
+            if code == "7":
+                self.start_home_retract()
+            elif code in ("2", "5"):
+                self.abort_home(
+                    f"[エラー] ホーム側リミットスイッチ到達前に移動が終了しました"
+                    f" ({SampleHandler.describe_move_status(code)})。"
+                )
+        elif self.home_phase == "retract":
+            if code == "5":
+                self.home_phase = None
+                self.home_deadline = None
+                self.home_timeout_timer.stop()
+                self.finish_moving("ホーム位置への移動完了")
+            elif code in ("2", "7"):
+                self.abort_home(
+                    f"[エラー] ホーム位置への移動が完了しませんでした"
+                    f" ({SampleHandler.describe_move_status(code)})。"
+                )
+
+    def abort_home(self, reason: str):
+        """ホーム動作を中断し、Q を送ってから操作可能な状態に戻す。"""
+        if self.home_abort_reason:
+            return
+        self.home_abort_reason = reason
+        self.home_phase = "aborting"
+        self.home_deadline = None
+        self.home_timeout_timer.stop()
+        self.poll_timer.stop()
+        self.log_append(reason)
+        if self.is_busy:
+            self.pending_stop = True
+            self.log_append("[SYSTEM] 通信処理の完了後にQで停止します。")
+            return
+        self.send_stop()
+
+    def finish_home_abort(self):
+        """Q送信後にホーム動作状態を破棄する。"""
+        self.home_phase = None
+        self.home_deadline = None
+        self.home_timeout_timer.stop()
+        self.home_abort_reason = None
+
     def after_move(self, success: bool):
         """移動コマンド送信後の処理。移動が終わるまで状況確認を続ける。"""
         if not success:
@@ -438,6 +634,12 @@ class SampleHandlerSettingWindow(QMainWindow):
 
         # 状況確認が停止コマンドと衝突しないよう、先に定期確認を止める
         self.poll_timer.stop()
+        if self.home_phase is not None:
+            self.home_abort_reason = "[進行] ホーム動作を緊急停止します。"
+            self.home_phase = "aborting"
+            self.home_deadline = None
+            self.home_timeout_timer.stop()
+            self.log_append(self.home_abort_reason)
 
         if self.is_busy:
             # 他のコマンドを送受信している最中に割り込むとシリアル通信が壊れるため、
@@ -459,6 +661,15 @@ class SampleHandlerSettingWindow(QMainWindow):
 
     def after_stop(self, success: bool):
         """停止シーケンス後の処理。停止後は状況確認を続けず、操作を再び受け付ける。"""
+        if self.home_abort_reason:
+            self.log_append(
+                "[進行] ホーム動作の中断後にQを送信しました。"
+                if success
+                else "[エラー] ホーム動作の中断後、Qの送信に失敗しました。"
+            )
+            self.finish_home_abort()
+            self.finish_moving("ホーム動作の中断")
+            return
         if success:
             self.log_append("[進行] 緊急停止を送信しました。")
         else:
@@ -473,11 +684,41 @@ class SampleHandlerSettingWindow(QMainWindow):
         """ステータス確認間隔の変更を反映する。"""
         self.poll_timer.setInterval(int(value * 1000))
 
+    def on_home_timeout(self):
+        """ホーム動作の制限時間を超えたら、移動を停止する。"""
+        if self.home_deadline is not None:
+            remaining = self.home_deadline - monotonic()
+            if remaining > 0:
+                self.home_timeout_timer.start(int(remaining * 1000) + 1)
+                return
+        if self.home_phase == "seek":
+            self.abort_home("[エラー] 100秒以内にリミットスイッチへ到達しませんでした。")
+        elif self.home_phase == "retract":
+            self.abort_home("[エラー] 5秒以内にホーム位置への移動が完了しませんでした。")
+
     def on_poll_tick(self):
         """移動中に、移動が終わったかと現在位置を確認する。"""
-        if not self.is_connected() or not self.is_moving or self.is_busy:
+        if not self.is_connected() or not self.is_moving:
             return
 
+        if self.home_phase in ("seek", "retract"):
+            if self.home_deadline is not None and monotonic() >= self.home_deadline:
+                if self.home_phase == "seek":
+                    self.abort_home("[エラー] 100秒以内にリミットスイッチへ到達しませんでした。")
+                else:
+                    self.abort_home("[エラー] 5秒以内にホーム位置への移動が完了しませんでした。")
+                return
+            if self.is_busy:
+                return
+            self.home_last_status_code = ""
+            self.run_command_sequence(
+                [("ホーム動作の移動状態を確認", self.handler.cmd_query_move_status())],
+                on_finished=self.after_home_poll,
+            )
+            return
+
+        if self.is_busy:
+            return
         steps: List[CommandStep] = [
             ("移動状態を確認", self.handler.cmd_query_move_status()),
             ("現在位置を確認", self.handler.cmd_query_position()),
@@ -569,6 +810,9 @@ class SampleHandlerSettingWindow(QMainWindow):
             self.set_position_display(SampleHandler.parse_numeric_response(response))
         elif command == self.handler.cmd_query_move_status():
             self.set_move_status_display(response)
+            if self.home_phase is not None:
+                self.home_last_status_code = response.strip()
+                return
             # 正常終了・リミットスイッチ停止などの応答が返ったら、状況確認を終える
             code = response.strip()
             if code in SampleHandler.MOVE_FINISHED_CODES:
@@ -608,6 +852,7 @@ class SampleHandlerSettingWindow(QMainWindow):
     def closeEvent(self, event):
         """ウィンドウを閉じるときに、タイマーとスレッドと接続を後片付けする。"""
         self.poll_timer.stop()
+        self.home_timeout_timer.stop()
         self.pending_stop = False
         self.serial_manager.disconnect_all()
         try:
