@@ -38,11 +38,15 @@ class MeasurementSettings:
 
     @property
     def background_displacement(self) -> int:
-        """Negative-side travel distance that puts the first sample at background."""
-        squid = wrap_position(self.squid_position)
-        background = wrap_position(self.background_position)
-        clockwise_distance = abs(squid - background)
-        return min(clockwise_distance, POSITION_MODULUS - clockwise_distance)
+        """Negative-side travel from home to put the background spot at the SQUID.
+
+        The background position is on the same absolute scale as the first
+        sample position, so the travel is (background - first sample).
+        """
+        return (
+            wrap_position(self.background_position)
+            - wrap_position(self.first_sample_position)
+        ) % POSITION_MODULUS
 
     @property
     def background_to_sample_displacement(self) -> int:

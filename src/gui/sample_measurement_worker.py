@@ -21,7 +21,6 @@ HOME_SEEK_TIMEOUT_SEC = 100.0
 HOME_RETRACT_TIMEOUT_SEC = 5.0
 MEASUREMENT_MOVE_TIMEOUT_SEC = 120.0
 POLL_INTERVAL_SEC = 0.1
-MOVE_START_DELAY_SEC = 0.3
 RESPONSE_TIMEOUT_SEC = 1.0
 
 
@@ -53,6 +52,7 @@ class SampleMeasurementWorker(QObject):
         self.operation = operation
         self.starting_position = starting_position
         self.handler_moving = False
+        self.move_start_position = None
 
     def run(self):
         """Run the selected operation and report all errors to the window."""
@@ -126,6 +126,8 @@ class SampleMeasurementWorker(QObject):
     def _start_move(self, direction_positive: bool, amount: int):
         if not 0 <= amount <= POSITION_MAX:
             raise ValueError(f"移動量が範囲外です: {amount}")
+        # 移動開始前の位置を記録し、%の「5」が前回の完了状態でないか後で確認する。
+        self.move_start_position = self._query_position()
         self._send_handler(
             self.handler.cmd_set_direction(direction_positive), "移動方向設定"
         )
@@ -133,14 +135,25 @@ class SampleMeasurementWorker(QObject):
         self.handler_moving = True
         self._send_handler(self.handler.cmd_execute_move(), "移動開始")
 
+    def _still_at_move_start(self) -> bool:
+        """True if the handler position is unchanged since the move command was sent."""
+        if self.move_start_position is None:
+            return False
+        return self._query_position() == self.move_start_position
+
     def _wait_for_move(self, deadline: float, successful_codes=("5",)):
-        # G直後の%が、モーターが動き出す前の前回完了状態(5)を拾わないよう少し待つ。
-        time.sleep(MOVE_START_DELAY_SEC)
         while True:
             if time.monotonic() >= deadline:
                 raise TimeoutError("サンプルハンドラーの移動がタイムアウトしました。")
             status = self._query_status()
             if status in successful_codes:
+                if status == "5" and self._still_at_move_start():
+                    # 位置が動いていないので、この5は前回の完了状態とみなして待ち続ける。
+                    self.log_message.emit(
+                        "[警告] %が5を返しましたが位置が未変化のため、移動開始を待ちます。"
+                    )
+                    time.sleep(POLL_INTERVAL_SEC)
+                    continue
                 self.handler_moving = False
                 return status
             if status in ("2", "7"):
@@ -225,6 +238,7 @@ class SampleMeasurementWorker(QObject):
             "ホーム位置移動量設定",
         )
         self.handler_moving = True
+        self.move_start_position = self._query_position()
         self._send_handler(self.handler.cmd_execute_move(), "ホーム位置へ移動")
         self._wait_for_move(time.monotonic() + HOME_RETRACT_TIMEOUT_SEC)
         self._send_handler(

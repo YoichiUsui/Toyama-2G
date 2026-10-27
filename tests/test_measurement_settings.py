@@ -23,8 +23,8 @@ class MeasurementSettingsTests(unittest.TestCase):
         self.assertEqual(settings.squid_port, "COM6")
         self.assertEqual(settings.sample_handler_port, "COM5")
         self.assertEqual(settings.sample_displacement, 89800)
-        self.assertEqual(settings.background_displacement, 4934)
-        self.assertEqual(settings.background_to_sample_displacement, 84866)
+        self.assertEqual(settings.background_displacement, 94734)
+        self.assertEqual(settings.background_to_sample_displacement, -4934)
 
     def test_positions_wrap_at_24_bits(self):
         self.assertEqual(wrap_position(16777216), 0)
@@ -40,7 +40,7 @@ class MeasurementSettingsTests(unittest.TestCase):
             measurement_velocity=1000,
         )
         self.assertEqual(settings.sample_displacement, 1)
-        self.assertEqual(settings.background_displacement, 1)
+        self.assertEqual(settings.background_displacement, 0)
 
     def test_displacement_becomes_nonnegative_amount_and_direction(self):
         self.assertEqual(direction_and_amount(89800), (False, 89800))
@@ -110,7 +110,7 @@ class SampleMeasurementWorkerTests(unittest.TestCase):
     def test_home_seeks_configured_limit_then_retracts_and_sets_motion_speed(self):
         self.worker._send_handler = Mock()
         self.worker._query_status = Mock(side_effect=["G", "7", "5"])
-        self.worker._query_position = Mock(return_value=100)
+        self.worker._query_position = Mock(side_effect=[500, 100, 100])
 
         position = self.worker._home()
 
@@ -124,7 +124,7 @@ class SampleMeasurementWorkerTests(unittest.TestCase):
     def test_home_retries_status_once_when_illegal_command_then_limit(self):
         self.worker._send_handler = Mock()
         self.worker._query_status = Mock(side_effect=["1", "7", "5"])
-        self.worker._query_position = Mock(return_value=100)
+        self.worker._query_position = Mock(side_effect=[500, 100, 100])
 
         with unittest.mock.patch("src.gui.sample_measurement_worker.time.sleep"):
             self.assertEqual(self.worker._home(), 100)
@@ -137,13 +137,25 @@ class SampleMeasurementWorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(ConnectionError, "illegal command"):
                 self.worker._home()
 
+    def test_first_5_is_ignored_while_position_has_not_changed(self):
+        from unittest.mock import patch
+
+        self.worker._send_handler = Mock()
+        self.worker._query_status = Mock(side_effect=["5", "5"])
+        self.worker._query_position = Mock(side_effect=[0, 0, 123])
+        self.worker.move_start_position = 0
+        with patch("src.gui.sample_measurement_worker.time.sleep"):
+            self.worker._wait_for_move(float("inf"))
+
+        self.assertEqual(self.worker._query_status.call_count, 2)
+
     def test_move_uses_nonnegative_amount_and_direction_separately(self):
         from unittest.mock import patch
 
         self.manager.receive_response.side_effect = None
         self.manager.receive_response.return_value = ""
         self.worker._query_status = lambda: "5"
-        self.worker._query_position = lambda: 123
+        self.worker._query_position = Mock(side_effect=[0, 123, 123])
         with patch("src.gui.sample_measurement_worker.time.monotonic", return_value=1):
             self.worker._move_displacement(89800, 120, "sample")
 
@@ -176,7 +188,7 @@ class SampleMeasurementWorkerTests(unittest.TestCase):
         self.assertEqual(position, 1234)
         self.assertEqual(
             [call.args[0] for call in self.worker._move_displacement.call_args_list],
-            [200, 700, -900],
+            [1100, -200, -900],
         )
         self.assertEqual(
             sections[-1],
