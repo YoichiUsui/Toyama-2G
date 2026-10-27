@@ -142,7 +142,7 @@ class SampleMeasurementWorkerTests(unittest.TestCase):
 
         self.worker._send_handler = Mock()
         self.worker._query_status = Mock(side_effect=["5", "5"])
-        self.worker._query_position = Mock(side_effect=[0, 0, 123])
+        self.worker._query_position =         Mock(side_effect=[0, 123])
         self.worker.move_start_position = 0
         with patch("src.gui.sample_measurement_worker.time.sleep"):
             self.worker._wait_for_move(float("inf"))
