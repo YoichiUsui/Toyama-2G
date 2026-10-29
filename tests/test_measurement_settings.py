@@ -148,6 +148,19 @@ class SampleMeasurementWorkerTests(unittest.TestCase):
             self.worker._wait_for_move(float("inf"))
 
         self.assertEqual(self.worker._query_status.call_count, 2)
+    def test_status_query_retries_when_no_response(self):
+        self.worker._send_handler = Mock(side_effect=["", "G"])
+        with unittest.mock.patch("src.gui.sample_measurement_worker.time.sleep"):
+            self.assertEqual(self.worker._query_status(), "G")
+        self.manager.clear_input_buffer.assert_called_once_with("Sample Handler")
+
+    def test_status_query_fails_after_repeated_no_response(self):
+        self.worker._send_handler = Mock(return_value="")
+        with unittest.mock.patch("src.gui.sample_measurement_worker.time.sleep"):
+            with self.assertRaisesRegex(ConnectionError, "応答がありません"):
+                self.worker._query_status()
+        self.assertEqual(self.worker._send_handler.call_count, 3)
+
     def test_move_timeout_sends_q_and_fails(self):
         self.worker.handler_moving = True
         with self.assertRaisesRegex(TimeoutError, "Q"):

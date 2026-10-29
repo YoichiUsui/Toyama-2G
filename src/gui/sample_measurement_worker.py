@@ -21,6 +21,7 @@ HOME_SEEK_TIMEOUT_SEC = 100.0
 HOME_RETRACT_TIMEOUT_SEC = 5.0
 MEASUREMENT_MOVE_TIMEOUT_SEC = 120.0
 POLL_INTERVAL_SEC = 0.1
+STATUS_QUERY_ATTEMPTS = 3
 RESPONSE_TIMEOUT_SEC = 1.0
 
 
@@ -85,13 +86,21 @@ class SampleMeasurementWorker(QObject):
         )
 
     def _query_status(self) -> str:
-        response = self._send_handler(
-            self.handler.cmd_query_move_status(), "移動状態確認"
-        ).strip()
-        if not response:
-            raise ConnectionError("サンプルハンドラーの移動状態応答がありません。")
-        self.log_message.emit(f"[Sample Handler] << 移動状態: {response}")
-        return response
+        """%を送って移動状態を読む。無応答なら入力を空にして数回だけ再送する。"""
+        for attempt in range(1, STATUS_QUERY_ATTEMPTS + 1):
+            response = self._send_handler(
+                self.handler.cmd_query_move_status(), "移動状態確認"
+            ).strip()
+            if response:
+                self.log_message.emit(f"[Sample Handler] << 移動状態: {response}")
+                return response
+            self.log_message.emit(
+                f"[警告] %への応答がありません ({attempt}/{STATUS_QUERY_ATTEMPTS}回目, "
+                f"{time.strftime('%H:%M:%S')})。"
+            )
+            self.manager.clear_input_buffer(SAMPLE_HANDLER)
+            time.sleep(POLL_INTERVAL_SEC)
+        raise ConnectionError("サンプルハンドラーの移動状態応答がありません。")
 
     def _query_position(self) -> int:
         response = self._send_handler(
