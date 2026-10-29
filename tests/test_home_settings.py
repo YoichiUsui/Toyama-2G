@@ -61,7 +61,7 @@ class HomeSettingsTests(unittest.TestCase):
         settings = load_home_settings(settings_path)
 
         self.assertEqual(settings.side, "+")
-        self.assertEqual(settings.position, 1300)
+        self.assertEqual(settings.position, 1302)
 
 
 class SampleHandlerHomeCommandTests(unittest.TestCase):

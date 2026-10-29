@@ -17,14 +17,14 @@ if project_root not in sys.path:
 
 from PyQt6.QtWidgets import QApplication
 
-from src.gui.squid_measurement_window import SquidMeasurementWindow
+from src.gui.squid_count_window import SquidMeasurementWindow
 from src.squid_config import load_flux_quanta
 
 SQUID_SETTING_PATH = os.path.join(project_root, "settings", "squid_setting.txt")
 
 
 def main():
-    """Launch the SQUID measurement test tool."""
+    """Launch the SQUID-only measurement test tool."""
     flux_quanta = load_flux_quanta(SQUID_SETTING_PATH)
 
     app = QApplication(sys.argv)

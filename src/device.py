@@ -226,7 +226,7 @@ class SampleHandler(SerialDevice):
     MOVE_STATUS_MESSAGES = {
         "2": "パラメータエラー",
         "5": "正常終了",
-        "7": "リミットスイッチで停止（正常終了ではない）",
+        "7": "リミットスイッチで停止（Hlコマンドでは正常終了、Gコマンドでは異常）",
         "G": "移動中",
     }
 
@@ -386,6 +386,10 @@ class SampleHandler(SerialDevice):
     def cmd_query_position(self) -> str:
         """現在位置を問い合わせるコマンド文字列 (VP)。"""
         return "VP"
+
+    def cmd_query_remaining_steps(self) -> str:
+        """現在の移動の残りステップ数を問い合わせるコマンド文字列 (VG)。移動中でなければ0。"""
+        return "VG"
 
     # ------------------------------------------------------------------
     # レスポンス解析
