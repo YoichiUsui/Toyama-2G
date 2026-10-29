@@ -148,6 +148,14 @@ class SampleMeasurementWorkerTests(unittest.TestCase):
             self.worker._wait_for_move(float("inf"))
 
         self.assertEqual(self.worker._query_status.call_count, 2)
+    def test_move_timeout_sends_q_and_fails(self):
+        self.worker.handler_moving = True
+        with self.assertRaisesRegex(TimeoutError, "Q"):
+            self.worker._wait_for_move(0)
+
+        self.manager.send_command.assert_called_once_with("Sample Handler", "Q")
+        self.assertFalse(self.worker.handler_moving)
+
     def test_move_uses_nonnegative_amount_and_direction_separately(self):
         from unittest.mock import patch
 

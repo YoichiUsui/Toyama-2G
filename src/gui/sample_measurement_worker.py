@@ -146,7 +146,11 @@ class SampleMeasurementWorker(QObject):
     def _wait_for_move(self, deadline: float, successful_codes=("5",)):
         while True:
             if time.monotonic() >= deadline:
-                raise TimeoutError("サンプルハンドラーの移動がタイムアウトしました。")
+                self.log_message.emit("[エラー] 移動がタイムアウトしました。Qで停止します。")
+                self._stop_handler()
+                raise TimeoutError(
+                    "サンプルハンドラーの移動がタイムアウトしたため、Qで停止しました。"
+                )
             status = self._query_status()
             if status in successful_codes:
                 if status == "5" and self._remaining_steps() > 0:
