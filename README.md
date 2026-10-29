@@ -19,7 +19,7 @@ SQUID センサーとサンプルハンドラーを接続し、1番目の試料�
 以下のコマンドで起動する。
 
 ```
-python scripts/squid_measurement_test.py
+python scripts/sample_measurement_test.py
 ```
 
 起動時に `settings/port_names.txt`、`settings/squid_setting.txt`、
@@ -31,6 +31,9 @@ python scripts/squid_measurement_test.py
 移動または測定でエラーが発生した場合は自動復帰せず、ホーム動作以外の操作を
 無効にする。ホーム動作を正常完了すると測定可能な状態へ復帰する。測定中の
 サンプルハンドラー移動タイムアウトは1回あたり120秒。
+
+従来のSQUIDセンサー単体測定 GUI も `scripts/squid_measurement_test.py` として
+残している。このツールはサンプルハンドラーを動かさず、X/Y/Z の単発測定を行う。
 
 ## サンプルハンドラー 移動量設定補助ツール
 
