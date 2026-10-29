@@ -52,7 +52,6 @@ class SampleMeasurementWorker(QObject):
         self.operation = operation
         self.starting_position = starting_position
         self.handler_moving = False
-        self.move_start_position = None
 
     def run(self):
         """Run the selected operation and report all errors to the window."""
@@ -126,8 +125,6 @@ class SampleMeasurementWorker(QObject):
     def _start_move(self, direction_positive: bool, amount: int):
         if not 0 <= amount <= POSITION_MAX:
             raise ValueError(f"移動量が範囲外です: {amount}")
-        # 移動開始前の位置を記録し、%の「5」が前回の完了状態でないか後で確認する。
-        self.move_start_position = self._query_position()
         self._send_handler(
             self.handler.cmd_set_direction(direction_positive), "移動方向設定"
         )
@@ -135,11 +132,16 @@ class SampleMeasurementWorker(QObject):
         self.handler_moving = True
         self._send_handler(self.handler.cmd_execute_move(), "移動開始")
 
-    def _still_at_move_start(self) -> bool:
-        """True if the handler position is unchanged since the move command was sent."""
-        if self.move_start_position is None:
-            return False
-        return self._query_position() == self.move_start_position
+    def _remaining_steps(self) -> int:
+        """VGで現在の移動の残りステップ数を読む (移動していなければ0)。"""
+        response = self._send_handler(
+            self.handler.cmd_query_remaining_steps(), "残りステップ確認"
+        )
+        steps = self.handler.parse_numeric_response(response)
+        if steps is None:
+            raise ConnectionError(f"残りステップ数を読み取れません: {response!r}")
+        self.log_message.emit(f"[Sample Handler] << 残りステップ: {steps}")
+        return steps
 
     def _wait_for_move(self, deadline: float, successful_codes=("5",)):
         while True:
@@ -147,10 +149,10 @@ class SampleMeasurementWorker(QObject):
                 raise TimeoutError("サンプルハンドラーの移動がタイムアウトしました。")
             status = self._query_status()
             if status in successful_codes:
-                if status == "5" and self._still_at_move_start():
-                    # 位置が動いていないので、この5は前回の完了状態とみなして待ち続ける。
+                if status == "5" and self._remaining_steps() > 0:
+                    # %の5が前回の完了状態の可能性がある。残りステップがあれば移動中とみなす。
                     self.log_message.emit(
-                        "[警告] %が5を返しましたが位置が未変化のため、移動開始を待ちます。"
+                        "[警告] %が5を返しましたが残りステップがあるため、移動中として待ちます。"
                     )
                     time.sleep(POLL_INTERVAL_SEC)
                     continue
@@ -238,7 +240,6 @@ class SampleMeasurementWorker(QObject):
             "ホーム位置移動量設定",
         )
         self.handler_moving = True
-        self.move_start_position = self._query_position()
         self._send_handler(self.handler.cmd_execute_move(), "ホーム位置へ移動")
         self._wait_for_move(time.monotonic() + HOME_RETRACT_TIMEOUT_SEC)
         self._send_handler(

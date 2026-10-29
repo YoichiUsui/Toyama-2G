@@ -110,7 +110,8 @@ class SampleMeasurementWorkerTests(unittest.TestCase):
     def test_home_seeks_configured_limit_then_retracts_and_sets_motion_speed(self):
         self.worker._send_handler = Mock()
         self.worker._query_status = Mock(side_effect=["G", "7", "5"])
-        self.worker._query_position = Mock(side_effect=[500, 100, 100])
+        self.worker._remaining_steps = Mock(return_value=0)
+        self.worker._query_position = Mock(return_value=100)
 
         position = self.worker._home()
 
@@ -124,7 +125,8 @@ class SampleMeasurementWorkerTests(unittest.TestCase):
     def test_home_retries_status_once_when_illegal_command_then_limit(self):
         self.worker._send_handler = Mock()
         self.worker._query_status = Mock(side_effect=["1", "7", "5"])
-        self.worker._query_position = Mock(side_effect=[500, 100, 100])
+        self.worker._remaining_steps = Mock(return_value=0)
+        self.worker._query_position = Mock(return_value=100)
 
         with unittest.mock.patch("src.gui.sample_measurement_worker.time.sleep"):
             self.assertEqual(self.worker._home(), 100)
@@ -137,25 +139,23 @@ class SampleMeasurementWorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(ConnectionError, "illegal command"):
                 self.worker._home()
 
-    def test_first_5_is_ignored_while_position_has_not_changed(self):
+    def test_5_is_ignored_while_steps_remain(self):
         from unittest.mock import patch
 
-        self.worker._send_handler = Mock()
         self.worker._query_status = Mock(side_effect=["5", "5"])
-        self.worker._query_position =         Mock(side_effect=[0, 123])
-        self.worker.move_start_position = 0
+        self.worker._remaining_steps = Mock(side_effect=[4000, 0])
         with patch("src.gui.sample_measurement_worker.time.sleep"):
             self.worker._wait_for_move(float("inf"))
 
         self.assertEqual(self.worker._query_status.call_count, 2)
-
     def test_move_uses_nonnegative_amount_and_direction_separately(self):
         from unittest.mock import patch
 
         self.manager.receive_response.side_effect = None
         self.manager.receive_response.return_value = ""
         self.worker._query_status = lambda: "5"
-        self.worker._query_position = Mock(side_effect=[0, 123, 123])
+        self.worker._remaining_steps = lambda: 0
+        self.worker._query_position = Mock(return_value=123)
         with patch("src.gui.sample_measurement_worker.time.monotonic", return_value=1):
             self.worker._move_displacement(89800, 120, "sample")
 
